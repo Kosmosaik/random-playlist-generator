@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spotify Random Playlist Generator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>Spotify Random Playlist Generator v0.10</h1>
+
+  <button id="loginBtn">Login with Spotify</button>
+
+  <div id="controls" style="display:none;">
+    <label>Genre:</label>
+    <select id="genre">
+      <option value="pop">Pop</option>
+      <option value="rock">Rock</option>
+      <option value="metal">Metal</option>
+      <option value="hip-hop">Hip-Hop</option>
+      <option value="electronic">Electronic</option>
+    </select>
+
+    <label>Year range:</label>
+    <input type="number" id="yearFrom" placeholder="From" value="1900">
+    <input type="number" id="yearTo" placeholder="To" value="2025">
+
+    <label>Playlist size:</label>
+    <input type="number" id="size" placeholder="e.g. 100" value="50">
+
+    <label>Min popularity (0–100):</label>
+    <input type="number" id="popularity" value="40">
+
+    <button id="generateBtn">🎵 Generate Playlist</button>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
