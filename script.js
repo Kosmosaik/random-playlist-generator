@@ -1,5 +1,5 @@
 const clientId = "0ef85cdf0e3744888420f10e413dc758"; // Replace this with your Client ID
-const redirectUri = window.location.origin + window.location.pathname;
+const redirectUri = "https://kosmosaik.github.io/random-playlist-generator/";
 const scopes = "playlist-modify-public playlist-modify-private";
 
 function login() {
