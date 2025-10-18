@@ -1,5 +1,5 @@
 // ==============================
-// Spotify Random Playlist Maker (Debug Version)
+// Spotify Random Playlist Maker (Debug + Genre Mapping)
 // Authorization Code Flow (PKCE)
 // ==============================
 window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
@@ -115,11 +115,22 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
 
     alert("🎬 Step 3: Got user info for " + me.display_name);
 
+    // ✅ Map user genre to valid Spotify seed
+    const validSeeds = {
+      pop: "pop",
+      rap: "rap",
+      rock: "rock",
+      metal: "metal",
+      "hip-hop": "hip hop",
+      edm: "edm",
+      };
+    const seed = validSeeds[genre.toLowerCase()] || "pop";
+
     const uris = [];
     for (let tries = 0; uris.length < size && tries < 5; tries++) {
       const year = Math.floor(Math.random() * (yearTo - yearFrom + 1)) + yearFrom;
       const res = await fetch(
-        `https://api.spotify.com/v1/recommendations?seed_genres=${genre.toLowerCase()}&limit=100&min_popularity=${minPopularity}`,
+        `https://api.spotify.com/v1/recommendations?seed_genres=${seed}&limit=100&min_popularity=${minPopularity}`,
         { headers: { Authorization: "Bearer " + token } }
       );
       if (!res.ok) return alert("⚠️ Fetch error: " + res.status);
