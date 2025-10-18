@@ -1,12 +1,17 @@
 // ==============================
-// Spotify Random Playlist Maker (Debug + Genre Mapping)
+// Spotify Random Playlist Maker (Verified Genres + Real Error Reporting)
 // Authorization Code Flow (PKCE)
 // ==============================
 window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
 
 const CLIENT_ID = "0ef85cdf0e3744888420f10e413dc758";
 const REDIRECT_URI = "https://kosmosaik.github.io/random-playlist-generator/";
-const SCOPES = ["playlist-modify-public", "playlist-modify-private", "playlist-read-private"];
+const SCOPES = [
+  "playlist-modify-public",
+  "playlist-modify-private",
+  "playlist-read-private",
+  "user-read-private"
+];
 
 // === PKCE UTILITIES ===
 async function sha256(str) {
@@ -71,7 +76,7 @@ async function completeLoginIfReturning() {
   const data = await res.json();
   sessionStorage.setItem("sp_access_token", data.access_token);
   sessionStorage.setItem("sp_token_expires", Date.now() + data.expires_in * 1000);
-  history.replaceState({}, document.title, REDIRECT_URI); // Clean up ?code= from URL
+  history.replaceState({}, document.title, REDIRECT_URI);
   return data.access_token;
 }
 
@@ -96,6 +101,27 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
   document.getElementById("loginBtn").style.display = "none";
   document.getElementById("controls").style.display = "block";
 
+  // 🎵 Step 1: Dynamically load valid genres from Spotify itself
+  const genreSelect = document.getElementById("genre");
+  let seedGenres = [];
+  try {
+    const seedRes = await fetch("https://api.spotify.com/v1/recommendations/available-genre-seeds", {
+      headers: { Authorization: "Bearer " + token },
+    });
+    const seedData = await seedRes.json();
+    seedGenres = seedData.genres.sort();
+    genreSelect.innerHTML = "";
+    seedGenres.forEach((g) => {
+      const opt = document.createElement("option");
+      opt.value = g;
+      opt.textContent = g.charAt(0).toUpperCase() + g.slice(1);
+      genreSelect.appendChild(opt);
+    });
+  } catch (e) {
+    alert("⚠️ Could not fetch valid genre list from Spotify.");
+  }
+
+  // 🎬 Playlist generator logic
   document.getElementById("generateBtn").addEventListener("click", async () => {
     alert("🎬 Step 1: Button clicked");
 
@@ -105,41 +131,37 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
     const size = parseInt(document.getElementById("size").value);
     const minPopularity = parseInt(document.getElementById("popularity").value);
 
-    alert("🎬 Step 2: Got input values");
+    alert("🎬 Step 2: Inputs OK, fetching profile...");
 
     const meRes = await fetch("https://api.spotify.com/v1/me", {
       headers: { Authorization: "Bearer " + token },
     });
     if (!meRes.ok) return alert("⚠️ Failed to get user info: " + meRes.status);
     const me = await meRes.json();
-
-    alert("🎬 Step 3: Got user info for " + me.display_name);
-
-    // ✅ Map user genre to valid Spotify seed
-    const validSeeds = {
-      pop: "pop",
-      rap: "rap",
-      rock: "rock",
-      metal: "metal",
-      "hip-hop": "hip hop",
-      edm: "edm",
-      };
-    const seed = validSeeds[genre.toLowerCase()] || "pop";
+    alert("🎬 Step 3: Logged in as " + me.display_name);
 
     const uris = [];
     for (let tries = 0; uris.length < size && tries < 5; tries++) {
       const year = Math.floor(Math.random() * (yearTo - yearFrom + 1)) + yearFrom;
-      const res = await fetch(
-        `https://api.spotify.com/v1/recommendations?seed_genres=${seed}&limit=100&min_popularity=${minPopularity}`,
-        { headers: { Authorization: "Bearer " + token } }
-      );
-      if (!res.ok) return alert("⚠️ Fetch error: " + res.status);
+      const endpoint = `https://api.spotify.com/v1/recommendations?seed_genres=${encodeURIComponent(
+        genre
+      )}&limit=100&min_popularity=${minPopularity}`;
+      const res = await fetch(endpoint, {
+        headers: { Authorization: "Bearer " + token },
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        return alert(`⚠️ Fetch error ${res.status}:\n${err}`);
+      }
+
       const data = await res.json();
-      alert("🎬 Step 4: Got " + data.tracks.length + " tracks from Spotify");
+      alert("🎬 Step 4: Got " + data.tracks.length + " tracks for " + genre);
       uris.push(...data.tracks.map((t) => t.uri));
     }
 
-    if (uris.length === 0) return alert("⚠️ No tracks found for that genre/year!");
+    if (uris.length === 0)
+      return alert("⚠️ No tracks found for genre '" + genre + "'. Try a different one.");
 
     alert("🎬 Step 5: Creating playlist...");
 
@@ -154,7 +176,10 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
         public: false,
       }),
     });
-    if (!playlistRes.ok) return alert("⚠️ Playlist creation failed: " + playlistRes.status);
+    if (!playlistRes.ok) {
+      const err = await playlistRes.text();
+      return alert(`⚠️ Playlist creation failed ${playlistRes.status}:\n${err}`);
+    }
     const playlist = await playlistRes.json();
 
     alert("🎬 Step 6: Adding " + uris.length + " tracks...");
