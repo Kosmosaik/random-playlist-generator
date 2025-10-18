@@ -1,5 +1,5 @@
 // ==============================
-// Spotify Random Playlist Maker
+// Spotify Random Playlist Maker (Debug Version)
 // Authorization Code Flow (PKCE)
 // ==============================
 window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
@@ -97,27 +97,40 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
   document.getElementById("controls").style.display = "block";
 
   document.getElementById("generateBtn").addEventListener("click", async () => {
+    alert("🎬 Step 1: Button clicked");
+
     const genre = document.getElementById("genre").value;
     const yearFrom = parseInt(document.getElementById("yearFrom").value);
     const yearTo = parseInt(document.getElementById("yearTo").value);
     const size = parseInt(document.getElementById("size").value);
     const minPopularity = parseInt(document.getElementById("popularity").value);
 
+    alert("🎬 Step 2: Got input values");
+
     const meRes = await fetch("https://api.spotify.com/v1/me", {
       headers: { Authorization: "Bearer " + token },
     });
+    if (!meRes.ok) return alert("⚠️ Failed to get user info: " + meRes.status);
     const me = await meRes.json();
 
+    alert("🎬 Step 3: Got user info for " + me.display_name);
+
     const uris = [];
-    while (uris.length < size) {
+    for (let tries = 0; uris.length < size && tries < 5; tries++) {
       const year = Math.floor(Math.random() * (yearTo - yearFrom + 1)) + yearFrom;
       const res = await fetch(
-        `https://api.spotify.com/v1/recommendations?seed_genres=${genre}&limit=100&min_popularity=${minPopularity}`,
+        `https://api.spotify.com/v1/recommendations?seed_genres=${genre.toLowerCase()}&limit=100&min_popularity=${minPopularity}`,
         { headers: { Authorization: "Bearer " + token } }
       );
+      if (!res.ok) return alert("⚠️ Fetch error: " + res.status);
       const data = await res.json();
+      alert("🎬 Step 4: Got " + data.tracks.length + " tracks from Spotify");
       uris.push(...data.tracks.map((t) => t.uri));
     }
+
+    if (uris.length === 0) return alert("⚠️ No tracks found for that genre/year!");
+
+    alert("🎬 Step 5: Creating playlist...");
 
     const playlistRes = await fetch(`https://api.spotify.com/v1/users/${me.id}/playlists`, {
       method: "POST",
@@ -130,7 +143,10 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
         public: false,
       }),
     });
+    if (!playlistRes.ok) return alert("⚠️ Playlist creation failed: " + playlistRes.status);
     const playlist = await playlistRes.json();
+
+    alert("🎬 Step 6: Adding " + uris.length + " tracks...");
 
     for (let i = 0; i < uris.length; i += 100) {
       await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
@@ -143,7 +159,7 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
       });
     }
 
-    alert("✅ Playlist created!");
+    alert("✅ Step 7: Playlist created!");
     window.open(playlist.external_urls.spotify, "_blank");
   });
 })();
