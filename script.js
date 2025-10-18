@@ -6,7 +6,7 @@ window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
 
 const CLIENT_ID = "0ef85cdf0e3744888420f10e413dc758";
 const REDIRECT_URI = "https://kosmosaik.github.io/random-playlist-generator/";
-const SCOPES = ["playlist-modify-public", "playlist-modify-private"];
+const SCOPES = ["playlist-modify-public", "playlist-modify-private", "playlist-read-private"];
 
 // === PKCE UTILITIES ===
 async function sha256(str) {
