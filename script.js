@@ -2,6 +2,7 @@
 // Spotify Random Playlist Maker
 // Authorization Code Flow (PKCE)
 // ==============================
+window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
 
 const CLIENT_ID = "0ef85cdf0e3744888420f10e413dc758";
 const REDIRECT_URI = "https://kosmosaik.github.io/random-playlist-generator/";
