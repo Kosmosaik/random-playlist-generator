@@ -1,5 +1,5 @@
 // ==============================
-// Spotify Random Playlist Maker (Static Genres + Debug + 404 Fix)
+// Spotify Random Playlist Maker (Full Debug + 404 Fix + URL Output)
 // Authorization Code Flow (PKCE)
 // ==============================
 window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
@@ -101,7 +101,7 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
   document.getElementById("loginBtn").style.display = "none";
   document.getElementById("controls").style.display = "block";
 
-  // ✅ Static list of all official Spotify genre seeds
+  // ✅ Static list of official Spotify genre seeds
   const seedGenres = [
     "acoustic","afrobeat","alt-rock","alternative","ambient","anime","black-metal","bluegrass",
     "blues","bossanova","brazil","breakbeat","british","cantopop","chicago-house","classical",
@@ -162,8 +162,13 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
       });
 
       if (!res.ok) {
-        const err = await res.text();
-        alert(`⚠️ Fetch error ${res.status}:\n${err}\n\nURL:\n${endpoint}`);
+        let errText = "";
+        try {
+          errText = await res.text();
+        } catch (e) {
+          errText = "(no error body)";
+        }
+        alert(`⚠️ Fetch error ${res.status}\n\nURL:\n${endpoint}\n\nResponse:\n${errText}`);
         return;
       }
 
