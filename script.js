@@ -1,5 +1,5 @@
 // ==============================
-// Spotify Random Playlist Maker (Browser-Only, Using /search)
+// Spotify Random Playlist Maker (Browser-Only, /search API + Subgenres + Fallback)
 // Authorization Code Flow (PKCE)
 // ==============================
 window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
@@ -101,16 +101,25 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
   document.getElementById("loginBtn").style.display = "none";
   document.getElementById("controls").style.display = "block";
 
-  // ✅ Static list of official Spotify genre seeds
+  // ✅ Main genres + subgenres
   const seedGenres = [
-    "acoustic","afrobeat","alt-rock","alternative","ambient","anime","black-metal","bluegrass",
-    "blues","brazil","british","classical","club","comedy","country","dance","dancehall",
-    "death-metal","deep-house","disco","disney","drum-and-bass","dub","dubstep","edm","electro",
-    "electronic","emo","folk","funk","garage","german","gospel","goth","grunge","hard-rock",
-    "hardcore","heavy-metal","hip-hop","holidays","house","indie","indie-pop","industrial","j-pop",
-    "jazz","k-pop","latin","metal","metalcore","opera","party","piano","pop","power-pop","punk",
-    "punk-rock","r-n-b","reggae","reggaeton","rock","rock-n-roll","romance","sad","salsa","samba",
-    "ska","soul","soundtracks","spanish","study","synth-pop","techno","trance","trip-hop"
+    // 🎸 Rock / Metal
+    "metal","heavy metal","nu metal","death metal","black metal","thrash metal","symphonic metal",
+    "doom metal","progressive metal","power metal","folk metal","industrial metal","hard rock",
+    "classic rock","punk","punk rock","post rock","grunge","garage rock","psychedelic rock",
+    "alternative rock","emo","pop punk","stoner rock",
+
+    // 🎧 Electronic / EDM
+    "edm","electro","techno","house","deep house","progressive house","dubstep","trance",
+    "drum and bass","ambient","synthwave","hardstyle","dance","electronic","downtempo",
+
+    // 🎤 Pop / Hip-Hop
+    "pop","indie pop","synth pop","dream pop","hip-hop","rap","trap","boom bap","r-n-b",
+    "funk","soul","disco","dance pop",
+
+    // 🌍 World / Others
+    "latin","reggaeton","bossa nova","jazz","blues","folk","country","classical",
+    "soundtrack","video game music","anime","lofi","instrumental"
   ];
 
   // 🎵 Populate dropdown
@@ -125,7 +134,7 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
 
   // 🎬 Playlist generator logic (using SEARCH)
   document.getElementById("generateBtn").addEventListener("click", async () => {
-    alert("🎬 Step 1: Starting search...");
+    alert("🎬 Step 1: Searching Spotify...");
 
     const genre = document.getElementById("genre").value;
     const yearFrom = parseInt(document.getElementById("yearFrom").value);
@@ -139,43 +148,45 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
     });
     const me = await meRes.json();
 
-    const uris = [];
+    async function searchTracks(searchGenre) {
+      const uris = [];
+      let offset = 0;
+      while (uris.length < size && offset < 1000) {
+        const query = `genre:"${searchGenre}" year:${yearFrom}-${yearTo}`;
+        const endpoint = `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=50&offset=${offset}`;
+        const res = await fetch(endpoint, {
+          headers: { Authorization: "Bearer " + token },
+        });
 
-    // We'll loop multiple searches with offsets to randomize results
-    let offset = 0;
-    while (uris.length < size && offset < 1000) {
-      const query = `genre:"${genre}" year:${yearFrom}-${yearTo}`;
-      const endpoint = `https://api.spotify.com/v1/search?q=${encodeURIComponent(
-        query
-      )}&type=track&limit=50&offset=${offset}`;
+        if (!res.ok) break;
+        const data = await res.json();
+        if (!data.tracks?.items?.length) break;
 
-      const res = await fetch(endpoint, {
-        headers: { Authorization: "Bearer " + token },
-      });
-
-      if (!res.ok) {
-        const err = await res.text();
-        alert(`⚠️ Search error ${res.status}:\n${err}`);
-        return;
+        const filtered = data.tracks.items.filter((t) => t.popularity >= minPopularity);
+        filtered.forEach((t) => uris.push(t.uri));
+        offset += 50;
       }
-
-      const data = await res.json();
-      if (!data.tracks?.items?.length) break;
-
-      // Filter by popularity
-      const filtered = data.tracks.items.filter((t) => t.popularity >= minPopularity);
-      filtered.forEach((t) => uris.push(t.uri));
-
-      offset += 50;
+      return uris;
     }
 
-    if (uris.length === 0)
-      return alert("⚠️ No songs found for that genre/year range. Try expanding it.");
+    let uris = await searchTracks(genre);
+    if (uris.length === 0 && genre.includes(" ")) {
+      // Auto fallback for subgenres
+      const broad = genre.split(" ").pop(); // e.g. "nu metal" -> "metal"
+      alert(`⚠️ No results for "${genre}", trying broader "${broad}" instead...`);
+      uris = await searchTracks(broad);
+    }
 
-    // Randomize and trim
+    if (uris.length === 0) {
+      alert("⚠️ No tracks found for that genre/year range. Try another.");
+      return;
+    }
+
+    // Randomize & trim
     const shuffled = uris.sort(() => 0.5 - Math.random()).slice(0, size);
 
     // Create playlist
+    alert("🎬 Step 2: Creating playlist...");
     const playlistRes = await fetch(`https://api.spotify.com/v1/users/${me.id}/playlists`, {
       method: "POST",
       headers: {
@@ -190,6 +201,7 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
     const playlist = await playlistRes.json();
 
     // Add tracks
+    alert("🎬 Step 3: Adding songs...");
     for (let i = 0; i < shuffled.length; i += 100) {
       await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
         method: "POST",
@@ -205,5 +217,6 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
     window.open(playlist.external_urls.spotify, "_blank");
   });
 })();
+
 
 
