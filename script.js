@@ -1,5 +1,5 @@
 // ==============================
-// Spotify Random Playlist Maker (Full Debug + 404 Fix + URL Output)
+// Spotify Random Playlist Maker (Browser-Only, Using /search)
 // Authorization Code Flow (PKCE)
 // ==============================
 window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
@@ -104,19 +104,13 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
   // ✅ Static list of official Spotify genre seeds
   const seedGenres = [
     "acoustic","afrobeat","alt-rock","alternative","ambient","anime","black-metal","bluegrass",
-    "blues","bossanova","brazil","breakbeat","british","cantopop","chicago-house","classical",
-    "club","comedy","country","dance","dancehall","death-metal","deep-house","detroit-techno",
-    "disco","disney","drum-and-bass","dub","dubstep","edm","electro","electronic","emo","folk",
-    "forro","french","funk","garage","german","gospel","goth","grindcore","groove","grunge",
-    "guitar","happy","hard-rock","hardcore","hardstyle","heavy-metal","hip-hop","holidays",
-    "honky-tonk","house","idm","indian","indie","indie-pop","industrial","iranian","j-dance",
-    "j-idol","j-pop","j-rock","jazz","k-pop","kids","latin","latino","malay","mandopop","metal",
-    "metalcore","minimal-techno","movies","mpb","new-age","new-release","opera","pagode","party",
-    "philippines-opm","piano","pop","pop-film","post-dubstep","power-pop","progressive-house",
-    "psych-rock","punk","punk-rock","r-n-b","reggae","reggaeton","rock","rock-n-roll","rockabilly",
-    "romance","sad","salsa","samba","sertanejo","show-tunes","singer-songwriter","ska","sleep",
-    "songwriter","soul","soundtracks","spanish","study","swedish","synth-pop","tango","techno",
-    "trance","trip-hop","turkish","work-out","world-music"
+    "blues","brazil","british","classical","club","comedy","country","dance","dancehall",
+    "death-metal","deep-house","disco","disney","drum-and-bass","dub","dubstep","edm","electro",
+    "electronic","emo","folk","funk","garage","german","gospel","goth","grunge","hard-rock",
+    "hardcore","heavy-metal","hip-hop","holidays","house","indie","indie-pop","industrial","j-pop",
+    "jazz","k-pop","latin","metal","metalcore","opera","party","piano","pop","power-pop","punk",
+    "punk-rock","r-n-b","reggae","reggaeton","rock","rock-n-roll","romance","sad","salsa","samba",
+    "ska","soul","soundtracks","spanish","study","synth-pop","techno","trance","trip-hop"
   ];
 
   // 🎵 Populate dropdown
@@ -129,9 +123,9 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
     genreSelect.appendChild(opt);
   });
 
-  // 🎬 Playlist generator logic
+  // 🎬 Playlist generator logic (using SEARCH)
   document.getElementById("generateBtn").addEventListener("click", async () => {
-    alert("🎬 Step 1: Button clicked");
+    alert("🎬 Step 1: Starting search...");
 
     const genre = document.getElementById("genre").value;
     const yearFrom = parseInt(document.getElementById("yearFrom").value);
@@ -139,49 +133,49 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
     const size = parseInt(document.getElementById("size").value);
     const minPopularity = parseInt(document.getElementById("popularity").value);
 
-    alert("🎬 Step 2: Inputs OK, fetching profile...");
-
+    // Get user info
     const meRes = await fetch("https://api.spotify.com/v1/me", {
       headers: { Authorization: "Bearer " + token },
     });
-    if (!meRes.ok) return alert("⚠️ Failed to get user info: " + meRes.status);
     const me = await meRes.json();
-    alert("🎬 Step 3: Logged in as " + me.display_name);
 
     const uris = [];
-    for (let tries = 0; uris.length < size && tries < 5; tries++) {
-      const year = Math.floor(Math.random() * (yearTo - yearFrom + 1)) + yearFrom;
 
-      const seedGenre = (genre || "metal").trim().toLowerCase();
-      const endpoint = `https://api.spotify.com/v1/recommendations?limit=100&market=US&seed_genres=${seedGenre}&min_popularity=${minPopularity}`;
-
-      alert("🎬 Step 4: Requesting recommendations for " + seedGenre);
+    // We'll loop multiple searches with offsets to randomize results
+    let offset = 0;
+    while (uris.length < size && offset < 1000) {
+      const query = `genre:"${genre}" year:${yearFrom}-${yearTo}`;
+      const endpoint = `https://api.spotify.com/v1/search?q=${encodeURIComponent(
+        query
+      )}&type=track&limit=50&offset=${offset}`;
 
       const res = await fetch(endpoint, {
         headers: { Authorization: "Bearer " + token },
       });
 
       if (!res.ok) {
-        let errText = "";
-        try {
-          errText = await res.text();
-        } catch (e) {
-          errText = "(no error body)";
-        }
-        alert(`⚠️ Fetch error ${res.status}\n\nURL:\n${endpoint}\n\nResponse:\n${errText}`);
+        const err = await res.text();
+        alert(`⚠️ Search error ${res.status}:\n${err}`);
         return;
       }
 
       const data = await res.json();
-      alert("🎬 Step 5: Got " + data.tracks.length + " tracks for " + seedGenre);
-      uris.push(...data.tracks.map((t) => t.uri));
+      if (!data.tracks?.items?.length) break;
+
+      // Filter by popularity
+      const filtered = data.tracks.items.filter((t) => t.popularity >= minPopularity);
+      filtered.forEach((t) => uris.push(t.uri));
+
+      offset += 50;
     }
 
     if (uris.length === 0)
-      return alert("⚠️ No tracks found for genre '" + genre + "'. Try a different one.");
+      return alert("⚠️ No songs found for that genre/year range. Try expanding it.");
 
-    alert("🎬 Step 6: Creating playlist...");
+    // Randomize and trim
+    const shuffled = uris.sort(() => 0.5 - Math.random()).slice(0, size);
 
+    // Create playlist
     const playlistRes = await fetch(`https://api.spotify.com/v1/users/${me.id}/playlists`, {
       method: "POST",
       headers: {
@@ -193,28 +187,23 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
         public: false,
       }),
     });
-    if (!playlistRes.ok) {
-      const err = await playlistRes.text();
-      alert(`⚠️ Playlist creation failed ${playlistRes.status}:\n${err}`);
-      return;
-    }
     const playlist = await playlistRes.json();
 
-    alert("🎬 Step 7: Adding " + uris.length + " tracks...");
-
-    for (let i = 0; i < uris.length; i += 100) {
+    // Add tracks
+    for (let i = 0; i < shuffled.length; i += 100) {
       await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
         method: "POST",
         headers: {
           Authorization: "Bearer " + token,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ uris: uris.slice(i, i + 100) }),
+        body: JSON.stringify({ uris: shuffled.slice(i, i + 100) }),
       });
     }
 
-    alert("✅ Step 8: Playlist created!");
+    alert("✅ Playlist created successfully!");
     window.open(playlist.external_urls.spotify, "_blank");
   });
 })();
+
 
