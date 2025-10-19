@@ -1,5 +1,5 @@
 // ==============================
-// Spotify Random Playlist Maker (Static Genres + Full Debug)
+// Spotify Random Playlist Maker (Static Genres + Debug + 404 Fix)
 // Authorization Code Flow (PKCE)
 // ==============================
 window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
@@ -101,7 +101,7 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
   document.getElementById("loginBtn").style.display = "none";
   document.getElementById("controls").style.display = "block";
 
-  // ✅ Static list of all official Spotify genre seeds (current 2025)
+  // ✅ Static list of all official Spotify genre seeds
   const seedGenres = [
     "acoustic","afrobeat","alt-rock","alternative","ambient","anime","black-metal","bluegrass",
     "blues","bossanova","brazil","breakbeat","british","cantopop","chicago-house","classical",
@@ -151,27 +151,31 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
     const uris = [];
     for (let tries = 0; uris.length < size && tries < 5; tries++) {
       const year = Math.floor(Math.random() * (yearTo - yearFrom + 1)) + yearFrom;
-      const endpoint = `https://api.spotify.com/v1/recommendations?seed_genres=${encodeURIComponent(
-        genre
-      )}&limit=100&min_popularity=${minPopularity}`;
+
+      const seedGenre = (genre || "metal").trim().toLowerCase();
+      const endpoint = `https://api.spotify.com/v1/recommendations?limit=100&market=US&seed_genres=${seedGenre}&min_popularity=${minPopularity}`;
+
+      alert("🎬 Step 4: Requesting recommendations for " + seedGenre);
+
       const res = await fetch(endpoint, {
         headers: { Authorization: "Bearer " + token },
       });
 
       if (!res.ok) {
         const err = await res.text();
-        return alert(`⚠️ Fetch error ${res.status}:\n${err}`);
+        alert(`⚠️ Fetch error ${res.status}:\n${err}\n\nURL:\n${endpoint}`);
+        return;
       }
 
       const data = await res.json();
-      alert("🎬 Step 4: Got " + data.tracks.length + " tracks for " + genre);
+      alert("🎬 Step 5: Got " + data.tracks.length + " tracks for " + seedGenre);
       uris.push(...data.tracks.map((t) => t.uri));
     }
 
     if (uris.length === 0)
       return alert("⚠️ No tracks found for genre '" + genre + "'. Try a different one.");
 
-    alert("🎬 Step 5: Creating playlist...");
+    alert("🎬 Step 6: Creating playlist...");
 
     const playlistRes = await fetch(`https://api.spotify.com/v1/users/${me.id}/playlists`, {
       method: "POST",
@@ -186,11 +190,12 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
     });
     if (!playlistRes.ok) {
       const err = await playlistRes.text();
-      return alert(`⚠️ Playlist creation failed ${playlistRes.status}:\n${err}`);
+      alert(`⚠️ Playlist creation failed ${playlistRes.status}:\n${err}`);
+      return;
     }
     const playlist = await playlistRes.json();
 
-    alert("🎬 Step 6: Adding " + uris.length + " tracks...");
+    alert("🎬 Step 7: Adding " + uris.length + " tracks...");
 
     for (let i = 0; i < uris.length; i += 100) {
       await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
@@ -203,7 +208,7 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
       });
     }
 
-    alert("✅ Step 7: Playlist created!");
+    alert("✅ Step 8: Playlist created!");
     window.open(playlist.external_urls.spotify, "_blank");
   });
 })();
