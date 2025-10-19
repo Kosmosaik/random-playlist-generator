@@ -1,9 +1,15 @@
 // ==============================
-// Spotify Random Playlist Maker (Browser-Only, /search API + Subgenres + Fallback)
-// Authorization Code Flow (PKCE)
+// Nu Metal Discovery Engine (Browser-Only)
+// - PKCE auth
+// - Random related-artist crawling
+// - Year & min/max popularity filters
+// - Playlist batching & dedupe
 // ==============================
+
+/* ---------- Debug (mobile-friendly) ---------- */
 window.onerror = (msg, src, line, col, err) => alert("⚠️ JS Error: " + msg);
 
+/* ---------- OAuth (PKCE) ---------- */
 const CLIENT_ID = "0ef85cdf0e3744888420f10e413dc758";
 const REDIRECT_URI = "https://kosmosaik.github.io/random-playlist-generator/";
 const SCOPES = [
@@ -13,7 +19,17 @@ const SCOPES = [
   "user-read-private",
 ];
 
-// === PKCE UTILITIES ===
+/* ---------- Easy-to-edit seed artists ---------- */
+const seedArtists = [
+  "12 Stones",
+  "3rd Strike",
+  "40 Below Summer",
+  "(Hed) P.E.",
+  "Reveille",
+];
+// Add more later, e.g. "Spineshank", "Flaw", "Adema", "Taproot", ...
+
+/* ---------- Small helpers ---------- */
 async function sha256(str) {
   const data = new TextEncoder().encode(str);
   const digest = await crypto.subtle.digest("SHA-256", data);
@@ -27,8 +43,24 @@ function randomString(len = 64) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
   return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
+function randPick(arr, n) {
+  // pick up to n random distinct items
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, n);
+}
+function yearOf(track) {
+  const d = track?.album?.release_date || "";
+  return parseInt(d.slice(0, 4), 10);
+}
+function uniq(arr) {
+  return [...new Set(arr)];
+}
 
-// === LOGIN FLOW ===
+/* ---------- PKCE login flow ---------- */
 async function beginLogin() {
   const verifier = randomString(96);
   const challenge = base64url(await sha256(verifier));
@@ -91,102 +123,205 @@ async function getAccessToken() {
   await beginLogin();
 }
 
-// === MAIN APP LOGIC ===
+/* ---------- Spotify API helpers ---------- */
+async function searchArtistIdByName(token, name) {
+  const endpoint = `https://api.spotify.com/v1/search?q=${encodeURIComponent(name)}&type=artist&limit=1`;
+  const r = await fetch(endpoint, { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) return null;
+  const j = await r.json();
+  return j?.artists?.items?.[0]?.id || null;
+}
+
+async function getRelatedArtists(token, artistId) {
+  const endpoint = `https://api.spotify.com/v1/artists/${artistId}/related-artists`;
+  const r = await fetch(endpoint, { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) return [];
+  const j = await r.json();
+  return j?.artists || [];
+}
+
+async function getArtistTopTracks(token, artistId) {
+  // market=from_token → uses user's market but is global-friendly
+  const endpoint = `https://api.spotify.com/v1/artists/${artistId}/top-tracks?market=from_token`;
+  const r = await fetch(endpoint, { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) return [];
+  const j = await r.json();
+  return j?.tracks || [];
+}
+
+/* ---------- Core discovery logic ---------- */
+async function collectTracksFromArtist(token, artistId, opts) {
+  // opts: { yearFrom, yearTo, minPop, maxPop, need, seenTrackUris }
+  const tracks = await getArtistTopTracks(token, artistId);
+  if (!tracks.length) return [];
+
+  // randomize a bit first
+  const shuffled = randPick(tracks, tracks.length);
+
+  const picked = [];
+  for (const t of shuffled) {
+    if (picked.length >= 2) break; // 1–2 tracks per artist
+
+    const y = yearOf(t);
+    const pop = t.popularity ?? 0;
+
+    if (
+      !isNaN(y) &&
+      y >= opts.yearFrom &&
+      y <= opts.yearTo &&
+      pop >= opts.minPop &&
+      pop <= opts.maxPop
+    ) {
+      const uri = t.uri;
+      if (!opts.seenTrackUris.has(uri)) {
+        picked.push(uri);
+        opts.seenTrackUris.add(uri);
+      }
+    }
+  }
+  return picked;
+}
+
+async function crawlFromSeed(token, seedName, opts) {
+  // returns an array of URIs gathered by walking related-artist graph
+  // opts: { need, yearFrom, yearTo, minPop, maxPop, seenArtistIds, seenTrackUris }
+  const uris = [];
+
+  const seedId = await searchArtistIdByName(token, seedName);
+  if (!seedId) return uris;
+
+  let currentId = seedId;
+  let safety = 0;
+
+  while (uris.length < opts.need && safety < 50) {
+    safety++;
+
+    // 2) related artists of current
+    const related = await getRelatedArtists(token, currentId);
+    const freshRelated = related.filter(a => !opts.seenArtistIds.has(a.id));
+
+    if (!freshRelated.length) {
+      // dead end → break this branch
+      break;
+    }
+
+    // 3) randomly pick 2–3 bands
+    const picks = randPick(freshRelated, Math.floor(Math.random() * 2) + 2); // 2 or 3
+    for (const a of picks) {
+      if (uris.length >= opts.need) break;
+      opts.seenArtistIds.add(a.id);
+
+      // 4) add 1–2 songs from top tracks (filtered)
+      const got = await collectTracksFromArtist(token, a.id, opts);
+      uris.push(...got);
+    }
+
+    if (uris.length >= opts.need) break;
+
+    // 5) go deeper → pick one of the last chosen artists as new current
+    if (picks.length) {
+      const next = picks[Math.floor(Math.random() * picks.length)];
+      currentId = next.id;
+    } else {
+      break; // no picks → end this branch
+    }
+  }
+
+  return uris;
+}
+
+/* ---------- UI wiring ---------- */
 document.getElementById("loginBtn").addEventListener("click", beginLogin);
 
 (async function init() {
   const token = await getAccessToken();
   if (!token) return;
 
-  document.getElementById("loginBtn").style.display = "none";
-  document.getElementById("controls").style.display = "block";
+  // show controls
+  const loginBtn = document.getElementById("loginBtn");
+  if (loginBtn) loginBtn.style.display = "none";
+  const controls = document.getElementById("controls");
+  if (controls) controls.style.display = "block";
 
-  // ✅ Main genres + subgenres
-  const seedGenres = [
-    // 🎸 Rock / Metal
-    "metal","heavy metal","nu metal","death metal","black metal","thrash metal","symphonic metal",
-    "doom metal","progressive metal","power metal","folk metal","industrial metal","hard rock",
-    "classic rock","punk","punk rock","post rock","grunge","garage rock","psychedelic rock",
-    "alternative rock","emo","pop punk","stoner rock",
-
-    // 🎧 Electronic / EDM
-    "edm","electro","techno","house","deep house","progressive house","dubstep","trance",
-    "drum and bass","ambient","synthwave","hardstyle","dance","electronic","downtempo",
-
-    // 🎤 Pop / Hip-Hop
-    "pop","indie pop","synth pop","dream pop","hip-hop","rap","trap","boom bap","r-n-b",
-    "funk","soul","disco","dance pop",
-
-    // 🌍 World / Others
-    "latin","reggaeton","bossa nova","jazz","blues","folk","country","classical",
-    "soundtrack","video game music","anime","lofi","instrumental"
-  ];
-
-  // 🎵 Populate dropdown
-  const genreSelect = document.getElementById("genre");
-  genreSelect.innerHTML = "";
-  seedGenres.sort().forEach((g) => {
-    const opt = document.createElement("option");
-    opt.value = g;
-    opt.textContent = g.charAt(0).toUpperCase() + g.slice(1);
-    genreSelect.appendChild(opt);
-  });
-
-  // 🎬 Playlist generator logic (using SEARCH)
   document.getElementById("generateBtn").addEventListener("click", async () => {
-    alert("🎬 Step 1: Searching Spotify...");
+    alert("🎬 Starting Nu Metal discovery crawl…");
 
-    const genre = document.getElementById("genre").value;
-    const yearFrom = parseInt(document.getElementById("yearFrom").value);
-    const yearTo = parseInt(document.getElementById("yearTo").value);
-    const size = parseInt(document.getElementById("size").value);
-    const minPopularity = parseInt(document.getElementById("popularity").value);
+    // pull inputs (with safe defaults)
+    const size = parseInt(document.getElementById("size")?.value || "50", 10);
+    const yearFrom = parseInt(document.getElementById("yearFrom")?.value || "1995", 10);
+    const yearTo = parseInt(document.getElementById("yearTo")?.value || "2008", 10);
+    const minPop = parseInt(document.getElementById("popularity")?.value || "0", 10);
+    const maxPopInput = document.getElementById("popularityMax");
+    const maxPop = maxPopInput ? parseInt(maxPopInput.value || "100", 10) : 100;
 
-    // Get user info
-    const meRes = await fetch("https://api.spotify.com/v1/me", {
-      headers: { Authorization: "Bearer " + token },
-    });
-    const me = await meRes.json();
-
-    async function searchTracks(searchGenre) {
-      const uris = [];
-      let offset = 0;
-      while (uris.length < size && offset < 1000) {
-        const query = `genre:"${searchGenre}" year:${yearFrom}-${yearTo}`;
-        const endpoint = `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=50&offset=${offset}`;
-        const res = await fetch(endpoint, {
-          headers: { Authorization: "Bearer " + token },
-        });
-
-        if (!res.ok) break;
-        const data = await res.json();
-        if (!data.tracks?.items?.length) break;
-
-        const filtered = data.tracks.items.filter((t) => t.popularity >= minPopularity);
-        filtered.forEach((t) => uris.push(t.uri));
-        offset += 50;
-      }
-      return uris;
+    if (yearTo < yearFrom) {
+      alert("⚠️ Year range is invalid. Make sure 'To' is greater than or equal to 'From'.");
+      return;
     }
-
-    let uris = await searchTracks(genre);
-    if (uris.length === 0 && genre.includes(" ")) {
-      // Auto fallback for subgenres
-      const broad = genre.split(" ").pop(); // e.g. "nu metal" -> "metal"
-      alert(`⚠️ No results for "${genre}", trying broader "${broad}" instead...`);
-      uris = await searchTracks(broad);
-    }
-
-    if (uris.length === 0) {
-      alert("⚠️ No tracks found for that genre/year range. Try another.");
+    if (minPop > maxPop) {
+      alert("⚠️ Popularity range is invalid. Min must be ≤ Max.");
       return;
     }
 
-    // Randomize & trim
-    const shuffled = uris.sort(() => 0.5 - Math.random()).slice(0, size);
+    // Get current user
+    const meRes = await fetch("https://api.spotify.com/v1/me", {
+      headers: { Authorization: "Bearer " + token },
+    });
+    if (!meRes.ok) return alert("⚠️ Failed to get user info: " + meRes.status);
+    const me = await meRes.json();
+
+    // Discovery loop
+    const seenArtistIds = new Set();
+    const seenTrackUris = new Set();
+    const finalUris = [];
+
+    // Randomize seed order so we don't always start the same
+    const seeds = randPick(seedArtists, seedArtists.length);
+
+    let seedIndex = 0;
+    let safeguard = 0;
+    while (finalUris.length < size && safeguard < 200) {
+      safeguard++;
+
+      // 1) pick one random seed (cycling through randomized order)
+      const seedName = seeds[seedIndex % seeds.length];
+      seedIndex++;
+
+      const needed = Math.min(size - finalUris.length, 20); // grab in small waves
+      const opts = {
+        need: needed,
+        yearFrom,
+        yearTo,
+        minPop,
+        maxPop,
+        seenArtistIds,
+        seenTrackUris
+      };
+
+      const grabbed = await crawlFromSeed(token, seedName, opts);
+      finalUris.push(...grabbed);
+
+      // If this seed barely produced results, try the next one immediately
+      if (grabbed.length < 4 && seedIndex < seeds.length) continue;
+
+      // If we exhausted all seeds and still short, reshuffle seeds and go again
+      if (seedIndex >= seeds.length && finalUris.length < size) {
+        seedIndex = 0;
+        // shuffle again to vary order next pass
+        seeds.sort(() => 0.5 - Math.random());
+      }
+    }
+
+    if (!finalUris.length) {
+      alert("😕 No tracks found that match your year & popularity filters. Try widening them.");
+      return;
+    }
+
+    // Dedupe and trim exactly to requested size
+    const unique = uniq(finalUris).slice(0, size);
 
     // Create playlist
-    alert("🎬 Step 2: Creating playlist...");
+    alert(`🎧 Creating playlist with ${unique.length} tracks…`);
     const playlistRes = await fetch(`https://api.spotify.com/v1/users/${me.id}/playlists`, {
       method: "POST",
       headers: {
@@ -194,29 +329,41 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        name: `${genre} ${yearFrom}-${yearTo} Mix`,
+        name: `Nu Metal Discovery Mix (${yearFrom}–${yearTo})`,
         public: false,
+        description: `Auto-generated via related-artist crawl. Popularity ${minPop}–${maxPop}.`
       }),
     });
+    if (!playlistRes.ok) {
+      const err = await playlistRes.text();
+      alert(`⚠️ Playlist creation failed ${playlistRes.status}:\n${err}`);
+      return;
+    }
     const playlist = await playlistRes.json();
 
-    // Add tracks
-    alert("🎬 Step 3: Adding songs...");
-    for (let i = 0; i < shuffled.length; i += 100) {
-      await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
+    // Add tracks in batches of 100
+    for (let i = 0; i < unique.length; i += 100) {
+      const batch = unique.slice(i, i + 100);
+      const addRes = await fetch(`https://api.spotify.com/v1/playlists/${playlist.id}/tracks`, {
         method: "POST",
         headers: {
           Authorization: "Bearer " + token,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ uris: shuffled.slice(i, i + 100) }),
+        body: JSON.stringify({ uris: batch }),
       });
+      if (!addRes.ok) {
+        const err = await addRes.text();
+        alert(`⚠️ Failed adding tracks (${addRes.status}):\n${err}`);
+        return;
+      }
     }
 
-    alert("✅ Playlist created successfully!");
+    alert("✅ Playlist created!");
     window.open(playlist.external_urls.spotify, "_blank");
   });
 })();
+
 
 
 
